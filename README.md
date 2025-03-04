@@ -1,8 +1,3 @@
-<div align="center">
-
-[![Moe Counter](https://count.getloli.com/get/@GalChat?theme=moebooru)](https://github.com/waterfeet/astrbot_plugin_guaguale)
-
-</div>
 
 # 刮刮乐插件
 每人初始100元，每日签到可获得100元，每次玩刮刮乐需要花费30元，每次共计7次中奖机会，每次中奖最低0元，最高100元
