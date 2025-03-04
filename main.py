@@ -9,7 +9,7 @@ import json
 from typing import Optional, Dict, List
 
 class ScratchServer:
-    def __init__(self, db_path='./data/plugins/astrbot_plugin_guaguale/scratch.db'):
+    def __init__(self, db_path='./data/scratch.db'):
         self.db_path = db_path
         self._init_db()
         
