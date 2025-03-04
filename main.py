@@ -308,7 +308,7 @@ class MyPlugin(Star):
         # 构建响应消息
         msg = "🏆 土豪排行榜 🏆"
         for item in global_rank['rankings']:
-            msg += (f"{item['rank']}. {item['nickname']} : {item['balance']}元")
+            msg += (f"{item['rank']}. {item['nickname']} : {item['balance']}元\n")
         
         if my_rank['success']:
             msg += (f"\n👤 您的排名: {my_rank['user_rank']}/{my_rank['total_users']}")
