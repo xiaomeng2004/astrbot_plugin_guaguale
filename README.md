@@ -13,9 +13,6 @@
 【刮刮乐排行榜】获取全局排行榜（暂不分群统计）
 
 
-# 作者
-[@水脚脚](https://github.com/waterfeet)
-
 # 支持
 
 [帮助文档](https://astrbot.soulter.top/dev/plugin.html)
