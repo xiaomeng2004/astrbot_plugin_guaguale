@@ -17,17 +17,31 @@ class ScratchServer:
         self.prizes = [0, 5, 10, 20, 50, 100]       # 可能开出的价值
         self.weights = [70, 15, 10, 3, 1.6, 0.4]    #相应概率 %
         self.cost = 25                              #每张票价   每张刮七个  中奖期望在24.85 元  爽死狗群友
+        self.max_daily_scratch = 10                 # 每日限制次数
 
 
 
     def _init_db(self):
-        """初始化数据库"""
+        """初始化数据库并添加新字段"""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('''CREATE TABLE IF NOT EXISTS users
                          (user_id TEXT PRIMARY KEY,
                           nickname TEXT,
                           balance INTEGER DEFAULT 100,
-                          last_sign_date DATE)''')
+                          last_sign_date DATE,
+                          last_scratch_date DATE,
+                          daily_scratch_count INTEGER DEFAULT 0)''')
+            # 尝试添加可能缺失的字段
+            try:
+                conn.execute('ALTER TABLE users ADD COLUMN last_scratch_date DATE;')
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute('ALTER TABLE users ADD COLUMN daily_scratch_count INTEGER DEFAULT 0;')
+            except sqlite3.OperationalError:
+                pass
+
+
 
     def _get_user(self, user_id: str) -> Optional[dict]:
         """获取用户信息"""
@@ -92,43 +106,105 @@ class ScratchServer:
         """生成刮刮乐"""
         return random.choices(self.prizes, weights=self.weights, k=7)
 
+    # def play_game(self, user_id: str) -> dict:
+    #     """
+    #     开始游戏并立即结算
+    #     返回格式:
+    #     {
+    #         "success": bool,
+    #         "balance": int,
+    #         "ticket": List[int],
+    #         "reward": int,
+    #         "msg": str
+    #     }
+    #     """
+    #     user = self._get_user(user_id)
+    #     if not user:
+    #         return {'success': False, 'msg': '用户不存在'}
+        
+    #     if user['balance'] < self.cost:
+    #         return {'success': False, 'msg': '余额不足'}
+        
+    #     # 生成彩票
+    #     ticket = self.generate_ticket()
+    #     reward = sum(ticket)
+        
+    #     # 更新余额
+    #     self._update_balance(user_id, reward - self.cost)
+        
+    #     # 获取最新余额
+    #     new_balance = user['balance'] + (reward - self.cost)
+        
+    #     return {
+    #         'success': True,
+    #         'balance': new_balance,
+    #         'ticket': ticket,
+    #         'reward': reward,
+    #         'net_gain': reward - self.cost,
+    #         'msg': f"获得 {reward}元 {'(盈利)' if reward > self.cost else '(亏损)'}"
+    #     }
+
     def play_game(self, user_id: str) -> dict:
-        """
-        开始游戏并立即结算
-        返回格式:
-        {
-            "success": bool,
-            "balance": int,
-            "ticket": List[int],
-            "reward": int,
-            "msg": str
-        }
-        """
-        user = self._get_user(user_id)
-        if not user:
-            return {'success': False, 'msg': '用户不存在'}
-        
-        if user['balance'] < self.cost:
-            return {'success': False, 'msg': '余额不足'}
-        
-        # 生成彩票
-        ticket = self.generate_ticket()
-        reward = sum(ticket)
-        
-        # 更新余额
-        self._update_balance(user_id, reward - self.cost)
-        
-        # 获取最新余额
-        new_balance = user['balance'] + (reward - self.cost)
-        
-        return {
-            'success': True,
-            'balance': new_balance,
-            'ticket': ticket,
-            'reward': reward,
-            'net_gain': reward - self.cost,
-            'msg': f"获得 {reward}元 {'(盈利)' if reward > self.cost else '(亏损)'}"
-        }
+        """带每日次数限制的游戏逻辑"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.isolation_level = 'IMMEDIATE'  # 开启事务
+            cur = conn.cursor()
+            
+            try:
+                # 获取并锁定用户数据
+                user = cur.execute('SELECT * FROM users WHERE user_id = ?', (user_id,)).fetchone()
+                if not user:
+                    return {'success': False, 'msg': '用户不存在'}
+                
+                user_dict = {
+                    'balance': user[2],
+                    'last_scratch_date': user[4],
+                    'daily_scratch_count': user[5] or 0
+                }
+
+                # 检查余额
+                if user_dict['balance'] < self.cost:
+                    return {'success': False, 'msg': '余额不足'}
+
+                # 检查次数限制
+                today = datetime.now().date()
+                last_date = (datetime.strptime(user_dict['last_scratch_date'], '%Y-%m-%d').date()
+                            if user_dict['last_scratch_date'] else None)
+                
+                if last_date == today:
+                    if user_dict['daily_scratch_count'] >= self.max_daily_scratch:
+                        return {'success': False, 'msg': '今日次数已用完'}
+                    new_count = user_dict['daily_scratch_count'] + 1
+                else:
+                    new_count = 1
+
+                # 生成彩票结果
+                ticket = self.generate_ticket()
+                reward = sum(ticket)
+                net_gain = reward - self.cost
+                new_balance = user_dict['balance'] + net_gain
+
+                # 更新数据库
+                cur.execute('''UPDATE users SET
+                            balance = ?,
+                            last_scratch_date = ?,
+                            daily_scratch_count = ?
+                            WHERE user_id = ?''',
+                            (new_balance, today.isoformat(), new_count, user_id))
+                
+                conn.commit()
+                return {
+                    'success': True,
+                    'balance': new_balance,
+                    'ticket': ticket,
+                    'reward': reward,
+                    'net_gain': net_gain,
+                    'msg': f"获得 {reward}元 {'(盈利)' if net_gain > 0 else '(亏损)'}"
+                }
+
+            except Exception as e:
+                conn.rollback()
+                return {'success': False, 'msg': '系统错误'}
     
     def get_rankings(self, top_n: int = 10) -> dict:
         """
