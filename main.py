@@ -306,7 +306,7 @@ class MyPlugin(Star):
         my_rank = self.server.get_user_ranking(user_id)
         
         # 构建响应消息
-        msg = "🏆 土豪排行榜 🏆"
+        msg = "🏆 土豪排行榜 🏆\n"
         for item in global_rank['rankings']:
             msg += (f"{item['rank']}. {item['nickname']} : {item['balance']}元\n")
         
