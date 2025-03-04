@@ -1,9 +1,27 @@
-# helloworld
+<div align="center">
 
-AstrBot 插件模板
+[![Moe Counter](https://count.getloli.com/get/@GalChat?theme=moebooru)](https://github.com/waterfeet/astrbot_plugin_guaguale)
 
-A template plugin for AstrBot plugin feature
+</div>
+
+# 刮刮乐插件
+每人初始100元，每日签到可获得100元，每次玩刮刮乐需要花费30元，每次共计7次中奖机会，每次中奖最低0元，最高100元
+
+作者
+[@水脚脚](https://github.com/waterfeet)
+
+指令：
+
+【刮刮乐】购买一张刮刮乐并刮开，计算得失       
+
+【刮刮乐余额】查询当前余额 
+
+【刮刮乐每日签到】获得100元
+
+【刮刮乐排行榜】获取全局排行榜（暂不分群统计）
+
 
 # 支持
+[帮助文档](https://astrbot.soulter.top/dev/plugin.html)
 
-[帮助文档](https://astrbot.app)
+[AstrBot](https://github.com/Soulter/AstrBot)
