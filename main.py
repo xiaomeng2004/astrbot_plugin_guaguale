@@ -249,6 +249,13 @@ class MyPlugin(Star):
             outputMsg = result['msg'] 
         yield event.plain_result(f"{outputMsg}")
 
+    @filter.command("刮刮乐帮助")
+    async def guaguale_play(self, event: AstrMessageEvent):
+        '''这是一个 刮刮乐帮助 指令 用于查看刮刮乐指令''' 
+
+        outputMsg = f("刮刮乐游戏,快来试试运气吧：\n【刮刮乐】购买一张刮刮乐并刮开，计算得失\n【刮刮乐余额】查询当前余额\n【刮刮乐每日签到】获得100元\n【刮刮乐排行榜】获取全局排行榜（暂不分群统计）")
+        yield event.plain_result(f"{outputMsg}")    
+
     @filter.command("刮刮乐余额")
     async def guaguale_balance(self, event: AstrMessageEvent):
         '''这是一个 刮刮乐 余额 指令 用于查询余额''' 
