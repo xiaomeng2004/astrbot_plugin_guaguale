@@ -4,7 +4,7 @@ from astrbot.api import logger
 
 import sqlite3
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 import json
 from typing import Optional, Dict, List
 
@@ -87,7 +87,7 @@ class ScratchServer:
         if not user:
             return {'success': False, 'msg': '用户不存在'}
         
-        today = datetime.now().date()
+        today = datetime.now(tz=timezone.utc).date()
         last_sign = user['last_sign_date']
         
         if last_sign and datetime.strptime(last_sign, '%Y-%m-%d').date() == today:
@@ -167,7 +167,7 @@ class ScratchServer:
                     return {'success': False, 'msg': '余额不足'}
 
                 # 检查次数限制
-                today = datetime.now().date()
+                today = datetime.now(tz=timezone.utc).date()
                 last_date = (datetime.strptime(user_dict['last_scratch_date'], '%Y-%m-%d').date()
                             if user_dict['last_scratch_date'] else None)
                 
