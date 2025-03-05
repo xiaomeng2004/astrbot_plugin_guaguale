@@ -1,3 +1,5 @@
+import re
+import time
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
@@ -38,11 +40,6 @@ class ScratchServer:
                 'prob': 2,
                 'effect': lambda uid,reward: random.randint(100, 200)  # 使用参数uid
             },
-            # 'balance_swap': {
-            #     'name': '🔄 乾坤大挪移',
-            #     'prob': 2,
-            #     'effect': lambda uid,reward: self._swap_random_balance(uid)  # 传入当前用户ID
-            # },
             'double_next': {
                 'name': '🔥 暴击时刻', 
                 'prob': 5,
@@ -55,7 +52,118 @@ class ScratchServer:
             },
         }
 
+        self.ITEM_EFFECTS = {
+            1: {  # 改名卡
+                'use': lambda user_id: 0,  # 什么都不用做 单独处理
+            },
+            2: {  # 刮卡券
+                'effect': lambda user_id: self._add_scratch_chance(user_id, 5)
+            },
+            3: {  # 护身符
+                'effect': lambda user_id: self._add_protection(user_id, 86400)  # 24小时
+            }
+        }
         self._init_db()
+
+        self.bossname = '水脚脚'
+        self._init_boss()  # 新增老板初始化
+
+        # 初始化商店商品
+        self.default_items = [
+            (1, "改名卡", 50, "修改你的昵称", 999),
+            (2, "刮卡券", 300, "额外增加5次刮卡次数", 99),
+            (3, "护身符", 1000, "24小时防抢劫保护", 10)
+        ]
+
+        self._init_shop()
+
+    def use_item(self, user_id: str, item_id: int) -> dict:
+        """使用道具"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.isolation_level = 'IMMEDIATE'
+            cur = conn.cursor()
+            
+            try:
+                # 验证道具存在且可用
+                item = cur.execute(
+                    'SELECT quantity FROM user_inventory WHERE user_id=? AND item_id=?',
+                    (user_id, item_id)
+                ).fetchone()
+                
+                if not item or item[0] < 1:
+                    return {'success': False, 'msg': '道具不存在或数量不足'}
+                
+                # 减少库存
+                cur.execute('''
+                    UPDATE user_inventory SET quantity = quantity - 1 
+                    WHERE user_id=? AND item_id=?
+                ''', (user_id, item_id))
+                
+                # 执行道具效果
+                effect = self.ITEM_EFFECTS.get(item_id)
+                if not effect:
+                    return {'success': False, 'msg': '无效的道具'}
+                conn.commit()
+                if 'effect' in effect:
+                    result = effect['effect'](user_id)
+                    return result
+                if 'use' in effect:
+                    return {'success': True, 'msg': ''}
+                    
+                return {'success': False, 'msg': '道具功能暂未实现'}
+                
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"使用道具失败: {str(e)}")
+                return {'success': False, 'msg': '使用道具失败'}
+
+    # 补充相关功能方法
+    def _add_scratch_chance(self, user_id: str, count: int):
+        """增加刮卡次数"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                UPDATE users SET daily_scratch_count = daily_scratch_count - ?
+                WHERE user_id = ?
+            ''', (count, user_id))
+            conn.commit()
+        return {'success': True, 'msg': f"成功增加{count}次刮卡机会"}
+
+    def _check_protection(self, user_id: str) -> bool:
+        """检查用户是否处于保护状态（同时清理过期记录）"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                current_time = int(time.time())
+                
+                # 先清理过期记录
+                conn.execute('DELETE FROM user_protection WHERE expire_time < ?', (current_time,))
+                
+                # 检查剩余保护
+                protected = conn.execute(
+                    'SELECT expire_time FROM user_protection WHERE user_id = ?',
+                    (user_id,)
+                ).fetchone()
+                
+                return protected is not None and protected[0] > current_time
+                
+        except Exception as e:
+            logger.error(f"保护检查失败: {str(e)}")
+            return False
+
+    def _add_protection(self, user_id: str, duration: int):
+        """添加保护（duration单位：秒）"""
+        try:
+            expire_time = int(time.time()) + duration
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO user_protection 
+                    (user_id, expire_time) VALUES (?, ?)
+                ''', (user_id, expire_time))
+                conn.commit()
+            return {'success': True, 'msg': f"保护卡使用成功"}
+        except Exception as e:
+            logger.error(f"添加保护失败: {str(e)}")
+            return {'success': False, 'msg': f"保护卡使用失败"}
+
 
 
     def _init_db(self):
@@ -81,20 +189,36 @@ class ScratchServer:
             try:
                 conn.execute('ALTER TABLE users ADD COLUMN last_rob_time INTEGER;')
             except sqlite3.OperationalError:
-                pass  
-            # 新增事件状态字段
-            try:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS event_states (
-                        user_id TEXT PRIMARY KEY,
-                        double_remain INTEGER DEFAULT 0,
-                        bonus_balance INTEGER DEFAULT 0
-                    )
-                ''')
-            except sqlite3.OperationalError:
-                pass  
+                pass
+            # 新增商店表
+            conn.execute('''CREATE TABLE IF NOT EXISTS shop_items
+                        (item_id INTEGER PRIMARY KEY,
+                        item_name TEXT,
+                        price INTEGER,
+                        description TEXT,
+                        stock INTEGER)''')
+            
+            # 新增用户库存表
+            conn.execute('''CREATE TABLE IF NOT EXISTS user_inventory
+                        (user_id TEXT,
+                        item_id INTEGER,
+                        quantity INTEGER,
+                        PRIMARY KEY (user_id, item_id))''')   
+            conn.execute('''CREATE TABLE IF NOT EXISTS user_protection
+                 (user_id TEXT PRIMARY KEY,
+                  expire_time INTEGER)''')
 
-
+    def _init_boss(self):
+        """初始化老板账户"""
+        boss_id = "boss"
+        with sqlite3.connect(self.db_path) as conn:
+            # 如果不存在则创建老板账户
+            conn.execute('''
+                INSERT OR IGNORE INTO users 
+                (user_id, nickname, balance) 
+                VALUES (?, ?, ?)
+            ''', (boss_id, "💰 系统老板"+ self.bossname, 10000))
+            conn.commit()
 
     def _get_user(self, user_id: str) -> Optional[dict]:
         """获取用户信息"""
@@ -221,22 +345,26 @@ class ScratchServer:
                         elif event['name'] == '👻 见鬼了！':
                             reward = effect_output
                             event_result = event | {'detail': "收益被鬼吃掉啦！"}
+                    else:
+                        event_result = None    
                 except Exception as e:
                     logger.error(f"Event handling error: {e}")
                     event_result = {'name': '⚡ 系统异常', 'detail': '事件处理失败'}            
-                    
+                    reward = original_reward  # 回退到原始奖励
                 # 更新最终收益（确保事件影响后的计算）
                 net_gain = reward - self.cost
                 new_balance = user_dict['balance'] + net_gain
                 
-                # 更新数据库
+                # 更新玩家数据
                 cur.execute('''UPDATE users SET
                             balance = ?,
                             last_scratch_date = ?,
                             daily_scratch_count = ?
                             WHERE user_id = ?''',
                             (new_balance, today.isoformat(), new_count, user_id))
-                
+                # 更新老板余额（反向操作）
+                cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = "boss"',
+                   (net_gain,))
                 conn.commit()
                 return {
                     'success': True,
@@ -251,6 +379,49 @@ class ScratchServer:
             except sqlite3.Error as e:
                 return {'success': False, 'msg': '数据库错误'}
     
+    def update_nickname(self, user_id: str, new_nickname: str) -> dict:
+        """更新用户昵称"""
+        # 清理前后空格
+        new_nickname = new_nickname.strip()
+        
+        # 验证基础格式
+        if len(new_nickname) < 2 or len(new_nickname) > 10:
+            return {'success': False, 'msg': '昵称长度需为2-10个字符'}
+        if not re.match(r'^[\w\u4e00-\u9fa5]+$', new_nickname):
+            return {'success': False, 'msg': '昵称仅支持中英文、数字和下划线'}
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.isolation_level = 'IMMEDIATE'
+            cur = conn.cursor()
+            
+            try:
+                # 检查昵称是否已存在
+                existing = cur.execute(
+                    'SELECT user_id FROM users WHERE nickname = ?',
+                    (new_nickname,)
+                ).fetchone()
+                
+                if existing and existing[0] != user_id:
+                    return {'success': False, 'msg': '昵称已被其他用户使用'}
+                
+                # 执行更新
+                cur.execute(
+                    'UPDATE users SET nickname = ? WHERE user_id = ?',
+                    (new_nickname, user_id)
+                )
+                
+                if cur.rowcount == 0:
+                    return {'success': False, 'msg': '用户不存在'}
+                    
+                conn.commit()
+                return {'success': True, 'msg': '昵称修改成功'}
+                
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"更新昵称失败: {str(e)}")
+                return {'success': False, 'msg': '昵称更新失败'}
+
+
     def rob_balance(self, robber_id: str, victim_id: str) -> dict:
         """
         抢劫逻辑核心方法
@@ -265,6 +436,11 @@ class ScratchServer:
         """
         if robber_id == victim_id:
             return {"success": False, "msg": "不能抢劫自己"}
+        
+        # 在抢劫逻辑开始处添加
+        protection = self._check_protection(victim_id)
+        if protection:
+            return {"success": False, "msg": "目标处于保护状态"}
 
         with sqlite3.connect(self.db_path) as conn:
             conn.isolation_level = 'IMMEDIATE'
@@ -457,34 +633,103 @@ class ScratchServer:
             upto += event['prob']
         return list(self.events.values())[0]
 
-    # def _swap_random_balance(self, user_id: str) -> str:
-    #     """随机交换余额"""
-    #     with sqlite3.connect(self.db_path) as conn:
-    #         # 找到随机目标
-    #         target = conn.execute(
-    #             'SELECT user_id, balance FROM users WHERE user_id != ? ORDER BY RANDOM() LIMIT 1',
-    #             (user_id,)
-    #         ).fetchone()
-    #         if not target:
-    #             return "交换失败，没有其他用户"
-            
-    #         # 交换余额
-    #         my_balance = conn.execute(
-    #             'SELECT balance FROM users WHERE user_id = ?',
-    #             (user_id,)
-    #         ).fetchone()[0]
-            
-    #         conn.execute(
-    #             'UPDATE users SET balance = ? WHERE user_id = ?',
-    #             (target[1], user_id)
-    #         )
-    #         conn.execute(
-    #             'UPDATE users SET balance = ? WHERE user_id = ?',
-    #             (my_balance, target[0])
-    #         )
-    #         return f"与 {target[0]} 交换了余额！"
+    def _init_shop(self):
+        """初始化商店商品"""
+        with sqlite3.connect(self.db_path) as conn:
+            # 插入或更新默认商品
+            for item in self.default_items:
+                conn.execute('''
+                    INSERT OR REPLACE INTO shop_items 
+                    (item_id, item_name, price, description, stock)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', item)
+            conn.commit()
 
-
+    def get_shop_items(self):
+        """获取商店商品列表"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.execute('SELECT * FROM shop_items ORDER BY item_id')
+                return {
+                    "success": True,
+                    "items": [dict(row) for row in cur.fetchall()]
+                }
+        except Exception as e:
+            logger.error(f"获取商品列表失败: {str(e)}")
+            return {
+                "success": False,
+                "error": "获取商品列表失败，请稍后重试"
+            }
+            
+    def purchase_item(self, user_id: str, item_id: int):
+        """购买商品逻辑"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.isolation_level = 'IMMEDIATE'
+            cur = conn.cursor()
+            
+            try:
+                # 获取商品信息
+                item = cur.execute(
+                    'SELECT * FROM shop_items WHERE item_id = ?',
+                    (item_id,)
+                ).fetchone()
+                
+                if not item:
+                    return {'success': False, 'msg': '商品不存在'}
+                    
+                # 检查用户余额
+                user_balance = cur.execute(
+                    'SELECT balance FROM users WHERE user_id = ?',
+                    (user_id,)
+                ).fetchone()[0]
+                
+                if user_balance < item[2]:
+                    return {'success': False, 'msg': '余额不足'}
+                
+                # 更新库存和余额
+                cur.execute('UPDATE shop_items SET stock = stock - 1 WHERE item_id = ?', (item_id,))
+                cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (item[2], user_id))
+                cur.execute('''INSERT OR REPLACE INTO user_inventory 
+                             VALUES (?, ?, COALESCE((SELECT quantity FROM user_inventory 
+                             WHERE user_id = ? AND item_id = ?), 0) + 1)''',
+                             (user_id, item_id, user_id, item_id))
+                
+                # 转账给老板
+                cur.execute('UPDATE users SET balance = balance + ? WHERE user_id = "boss"', (item[2],))
+                
+                conn.commit()
+                return {'success': True, 'item_name': item[1], 'balance': user_balance - item[2]}
+                
+            except Exception as e:
+                conn.rollback()
+                return {'success': False, 'msg': '购买失败'}
+    def get_user_inventory(self, user_id: str) -> dict:
+        """获取用户库存"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.execute('''
+                    SELECT i.item_id, i.item_name, i.description, inv.quantity 
+                    FROM user_inventory inv
+                    JOIN shop_items i ON inv.item_id = i.item_id
+                    WHERE inv.user_id = ?
+                ''', (user_id,))
+                
+                items = []
+                for row in cur.fetchall():
+                    items.append({
+                        "id": row['item_id'],
+                        "name": row['item_name'],
+                        "desc": row['description'],
+                        "quantity": row['quantity']
+                    })
+                    
+                return {'success': True, 'items': items}
+                
+        except Exception as e:
+            logger.error(f"获取库存失败: {str(e)}")
+            return {'success': False, 'error': '获取库存失败'}
 
 
 @register("guaguale", "WaterFeet", "刮刮乐插件，试试运气如何", "1.0.0", "https://github.com/waterfeet/astrbot_plugin_guaguale")
@@ -492,8 +737,21 @@ class MyPlugin(Star):
     server = ScratchServer()
     def __init__(self, context: Context):
         super().__init__(context)
+        self.admins = self._load_admins()  # 加载管理员列表
+    def _load_admins(self):
+        """加载管理员列表"""
+        try:
+            with open(os.path.join('data', 'cmd_config.json'), 'r', encoding='utf-8-sig') as f:
+                config = json.load(f)
+                return config.get('admins_id', [])
+        except Exception as e:
+            self.context.logger.error(f"加载管理员列表失败: {str(e)}")
+            return []
         
-
+    def is_admin(self, user_id):
+        """检查用户是否为管理员"""
+        return str(user_id) in self.admins  
+    
     @filter.command("刮刮乐")
     async def guaguale_play(self, event: AstrMessageEvent):
         '''抽一次刮刮乐''' 
@@ -504,11 +762,7 @@ class MyPlugin(Star):
             self.server.register_user(user_id, user_name)
 
         result = self.server.play_game(user_id)
-        # if result['success']:
-        #     ticket_str = " ".join(f"{n}元" for n in result['ticket'])
-        #     outputMsg =  f'''中奖结果：{ticket_str}\n净收益：{result['net_gain']}元\n余额：{result['balance']}元'''
-        # else:
-        #     outputMsg = result['msg'] 
+
         if result['success']:
             ticket_str = " ".join(f"{n}元" for n in result['ticket'])
             outputMsg = f"刮奖结果：{ticket_str}\n"
@@ -528,13 +782,22 @@ class MyPlugin(Star):
     async def guaguale_help(self, event: AstrMessageEvent):
         '''查看刮刮乐指令''' 
 
-        outputMsg = "刮刮乐游戏,快来试试运气吧：\n"
-        outputMsg += "【刮刮乐】购买一张刮刮乐并刮开，计算得失\n"
-        outputMsg += "【刮刮乐余额】查询当前余额\n"
-        outputMsg += "【刮刮乐每日签到】获得100元\n"
-        outputMsg += "【刮刮乐排行榜】获取全局排行榜（暂不分群统计）\n"
-        outputMsg += "【打劫@XXX】抢对方余额, 若失败需赔付"
-        yield event.plain_result(f"{outputMsg}")    
+        help_msg = """
+        🎮 刮刮乐游戏系统 🎮
+        1. 【刮刮乐】- 消耗25元刮奖（每日限10次）
+        2. 【刮刮乐每日签到】- 每日领取100元
+        3. 【刮刮乐余额】- 查询当前余额
+        4. 【打劫@某人】- 尝试抢劫对方余额
+        5. 【刮刮乐排行榜】- 查看财富排行榜
+        6. 【商店】- 显示商品列表
+        7. 【购买】- 如：购买 2
+        8. 【使用道具】- 如：使用道具 2
+        9. 【改名】- 如：改名 哪吒
+        10.【老板状态】- 查看可恶的老板有多少钱
+        11.【老板补款】- [admin]老板太穷了，给老板补一万
+        12.【我的仓库】- 显示自己的道具列表
+        """
+        yield event.plain_result(help_msg.strip()) 
 
     @filter.command("刮刮乐余额")
     async def guaguale_balance(self, event: AstrMessageEvent):
@@ -602,6 +865,7 @@ class MyPlugin(Star):
         '''抢劫其他用户的余额'''
         robber_id = event.get_sender_id()
         robber_name = event.get_sender_name()
+        victim_id = None
         for comp in event.message_obj.message:
             if isinstance(comp, At):
                 victim_id = comp.qq
@@ -633,3 +897,110 @@ class MyPlugin(Star):
             msg = f"❌ 抢劫失败：{result['msg']}"
             
         yield event.plain_result(msg)
+
+    @filter.command("老板补款")
+    async def boss_topup(self, event: AstrMessageEvent):
+        '''为老板账户补充资金'''
+        user_id = event.get_sender_id()
+        if not self.is_admin(user_id):
+            event.set_result(MessageEventResult().message("❌ 只有管理员才能使用此指令").use_t2i(False))
+            return
+        self.server._update_balance("boss", 10000)
+        boss_balance = self.server.get_balance("boss")['balance']
+        yield event.plain_result(f"老板资金已补充！当前老板账户余额：{boss_balance}元")    
+
+    @filter.command("老板状态")
+    async def boss_status(self, event: AstrMessageEvent):
+        '''查看系统老板的当前状态'''
+        boss_info = self.server.get_balance("boss")
+        if boss_info['success']:
+            yield event.plain_result(f"💰 系统老板{self.server.bossname}当前资金：{boss_info['balance']}元")
+        else:
+            yield event.plain_result("系统老板暂时不在线")
+
+    @filter.command("商店")
+    async def shop_command(self, event: AstrMessageEvent):
+        '''查看虚拟商店'''
+        result = self.server.get_shop_items()
+        
+        if not result['success']:
+            yield event.plain_result("⚠️ 商店暂时无法访问")
+            return
+
+        items = result['items']
+        if not items:
+            yield event.plain_result("🛒 商店暂时没有商品")
+            return
+
+        msg = "🛒 虚拟商店 🛒\n"
+        for item in items:
+            msg += (
+                f"【{item['item_id']}】{item['item_name']}\n"
+                f"💰 价格：{item['price']}元 | 📦 库存：{item['stock']}\n"
+                f"📝 说明：{item['description']}\n\n"
+            )
+        yield event.plain_result(msg.strip())
+
+    @filter.command("购买")
+    async def buy_command(self, event: AstrMessageEvent, oper1: str = None ):
+        '''购买商品 格式：购买 [商品ID]'''
+        user_id = event.get_sender_id()
+        item_id = oper1
+        result = self.server.purchase_item(user_id, item_id)
+        
+        if result['success']:
+            msg = (
+                f"🎁 成功购买 {result['item_name']}！\n"
+                f"💰 当前余额：{result['balance']}元"
+            )
+        else:
+            msg = f"❌ {result['msg']}"
+            
+        yield event.plain_result(msg)     
+        
+    @filter.command("我的仓库")
+    async def view_inventory(self, event: AstrMessageEvent):
+        '''查看拥有的道具'''
+        user_id = event.get_sender_id()
+        result = self.server.get_user_inventory(user_id)
+        
+        if not result['success']:
+            yield event.plain_result("❌ 暂时无法查看仓库")
+            return
+            
+        if not result['items']:
+            yield event.plain_result("👜 您的仓库空空如也")
+            return
+        
+        msg = "📦 您的仓库\n"
+        for item in result['items']:
+            msg += f"【{item['id']}】{item['name']} ×{item['quantity']}\n"
+            msg += f"▸ {item['desc']}\n\n"
+        
+        yield event.plain_result(msg.strip())    
+
+    @filter.command("使用道具")
+    async def use_item_cmd(self, event: AstrMessageEvent, oper1: str = None):
+        '''使用道具 格式：使用道具 [ID]'''
+        user_id = event.get_sender_id()
+        item_id = oper1
+        result = self.server.use_item(user_id, item_id)
+        if result['success']:
+            yield event.plain_result(f"✅ 使用成功！{result['msg']}")
+        else:
+            yield event.plain_result(f"❌ {result['msg']}")
+
+    # 处理改名卡输入
+    @filter.command("改名")
+    async def handle_rename(self, event: AstrMessageEvent,  new_name: str = None):
+        user_id = event.get_sender_id()
+        result = self.server.use_item(user_id, 1)
+        if not result['success']:
+            yield event.plain_result(f"❌ {result['msg']}")
+            return
+        if  2 <= len(new_name) <= 10:
+            # 实际更新昵称
+            self.server.update_nickname(event.get_sender_id(), new_name)
+            yield event.plain_result(f"✅ 昵称已修改为：{new_name}")
+        else:
+            yield event.plain_result("❌ 昵称长度需为2-10个字符")    
