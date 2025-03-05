@@ -1,17 +1,20 @@
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-
+from astrbot.api.all import *
 import sqlite3
 import random
 from datetime import datetime, timezone
 import json
 from typing import Optional, Dict, List
 
+from collections import defaultdict
+
+
+
 class ScratchServer:
     def __init__(self, db_path='./data/scratch.db'):
         self.db_path = db_path
-        self._init_db()
         
         # 彩票配置
         self.prizes = [0, 5, 10, 20, 50, 100]       # 可能开出的价值
@@ -19,6 +22,14 @@ class ScratchServer:
         self.cost = 25                              #每张票价   每张刮七个  中奖期望在24.85 元  爽死狗群友
         self.max_daily_scratch = 10                 # 每日限制次数
 
+         # 新增抢劫配置
+        self.rob_cooldown = 300         # 抢劫冷却时间（秒）
+        self.rob_success_rate = 35      # 成功率%
+        self.rob_base_amount = 30       # 基础抢劫金额
+        self.rob_max_ratio = 0.2        # 最大可抢对方余额的20%
+        self.rob_penalty = 30           # 失败赔偿金额
+
+        self._init_db()
 
 
     def _init_db(self):
@@ -40,6 +51,11 @@ class ScratchServer:
                 conn.execute('ALTER TABLE users ADD COLUMN daily_scratch_count INTEGER DEFAULT 0;')
             except sqlite3.OperationalError:
                 pass
+            # 新增抢劫时间字段
+            try:
+                conn.execute('ALTER TABLE users ADD COLUMN last_rob_time INTEGER;')
+            except sqlite3.OperationalError:
+                pass    
 
 
 
@@ -106,44 +122,7 @@ class ScratchServer:
         """生成刮刮乐"""
         return random.choices(self.prizes, weights=self.weights, k=7)
 
-    # def play_game(self, user_id: str) -> dict:
-    #     """
-    #     开始游戏并立即结算
-    #     返回格式:
-    #     {
-    #         "success": bool,
-    #         "balance": int,
-    #         "ticket": List[int],
-    #         "reward": int,
-    #         "msg": str
-    #     }
-    #     """
-    #     user = self._get_user(user_id)
-    #     if not user:
-    #         return {'success': False, 'msg': '用户不存在'}
-        
-    #     if user['balance'] < self.cost:
-    #         return {'success': False, 'msg': '余额不足'}
-        
-    #     # 生成彩票
-    #     ticket = self.generate_ticket()
-    #     reward = sum(ticket)
-        
-    #     # 更新余额
-    #     self._update_balance(user_id, reward - self.cost)
-        
-    #     # 获取最新余额
-    #     new_balance = user['balance'] + (reward - self.cost)
-        
-    #     return {
-    #         'success': True,
-    #         'balance': new_balance,
-    #         'ticket': ticket,
-    #         'reward': reward,
-    #         'net_gain': reward - self.cost,
-    #         'msg': f"获得 {reward}元 {'(盈利)' if reward > self.cost else '(亏损)'}"
-    #     }
-
+    
     def play_game(self, user_id: str) -> dict:
         """带每日次数限制的游戏逻辑"""
         with sqlite3.connect(self.db_path) as conn:
@@ -206,6 +185,107 @@ class ScratchServer:
                 conn.rollback()
                 return {'success': False, 'msg': '系统错误'}
     
+    def rob_balance(self, robber_id: str, victim_id: str) -> dict:
+        """
+        抢劫逻辑核心方法
+        返回格式:
+        {
+            "success": bool,
+            "msg": str,
+            "balance": int,      # 抢劫者最新余额
+            "stolen": int,       # 实际抢到金额
+            "cooldown": int      # 剩余冷却时间
+        }
+        """
+        if robber_id == victim_id:
+            return {"success": False, "msg": "不能抢劫自己"}
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.isolation_level = 'IMMEDIATE'
+            cur = conn.cursor()
+
+            try:
+                # 获取抢劫者信息（带行锁）
+                robber = cur.execute(
+                    'SELECT balance, last_rob_time FROM users WHERE user_id = ?',
+                    (robber_id,)
+                ).fetchone()
+                if not robber:
+                    return {"success": False, "msg": "抢劫者未注册"}
+                
+                # 检查冷却时间
+                current_time = int(datetime.now(tz=timezone.utc).timestamp())
+                last_rob_time = robber[1] or 0
+                cooldown_left = self.rob_cooldown - (current_time - last_rob_time)
+                
+                if cooldown_left > 0:
+                    return {
+                        "success": False,
+                        "msg": f"抢劫技能冷却中（剩余{cooldown_left}秒）",
+                        "cooldown": cooldown_left
+                    }
+
+                # 获取受害者信息（带行锁）
+                victim = cur.execute(
+                    'SELECT balance FROM users WHERE user_id = ?',
+                    (victim_id,)
+                ).fetchone()
+                if not victim:
+                    return {"success": False, "msg": "受害者不存在"}
+                
+                victim_balance = victim[0]
+                if victim_balance <= 0:
+                    return {"success": False, "msg": "对方是个穷光蛋"}
+
+                # 计算可抢金额
+                steal_amount = min(
+                    self.rob_base_amount + int(victim_balance * random.uniform(0.1, self.rob_max_ratio)),
+                    victim_balance
+                )
+                
+                # 判断抢劫是否成功
+                is_success = random.randint(1, 100) <= self.rob_success_rate
+                
+                if is_success:
+                    # 抢劫成功逻辑
+                    # 转移金额
+                    cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?',
+                               (steal_amount, victim_id))
+                    cur.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?',
+                               (steal_amount, robber_id))
+                    msg = f"成功抢劫了 {steal_amount}元！"
+                else:
+                    # 抢劫失败逻辑
+                    penalty = min(robber[0], self.rob_penalty)
+                    cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?',
+                               (penalty, robber_id))
+                    steal_amount = -penalty
+                    msg = f"抢劫失败，赔偿对方 {penalty}元！"
+
+                # 更新抢劫时间
+                cur.execute('UPDATE users SET last_rob_time = ? WHERE user_id = ?',
+                           (current_time, robber_id))
+                
+                # 获取最新余额
+                new_balance = cur.execute(
+                    'SELECT balance FROM users WHERE user_id = ?',
+                    (robber_id,)
+                ).fetchone()[0]
+                
+                conn.commit()
+                return {
+                    "success": True,
+                    "msg": msg,
+                    "balance": new_balance,
+                    "stolen": steal_amount,
+                    "cooldown": self.rob_cooldown
+                }
+
+            except Exception as e:
+                conn.rollback()
+                return {"success": False, "msg": "系统错误：抢劫失败"}
+
+
     def get_rankings(self, top_n: int = 10) -> dict:
         """
         获取全局排行榜
@@ -329,7 +409,12 @@ class MyPlugin(Star):
     async def guaguale_help(self, event: AstrMessageEvent):
         '''这是一个 刮刮乐帮助 指令 用于查看刮刮乐指令''' 
 
-        outputMsg = "刮刮乐游戏,快来试试运气吧：\n【刮刮乐】购买一张刮刮乐并刮开，计算得失\n【刮刮乐余额】查询当前余额\n【刮刮乐每日签到】获得100元\n【刮刮乐排行榜】获取全局排行榜（暂不分群统计）"
+        outputMsg = "刮刮乐游戏,快来试试运气吧：\n"
+        outputMsg += "【刮刮乐】购买一张刮刮乐并刮开，计算得失\n"
+        outputMsg += "【刮刮乐余额】查询当前余额\n"
+        outputMsg += "【刮刮乐每日签到】获得100元\n"
+        outputMsg += "【刮刮乐排行榜】获取全局排行榜（暂不分群统计）"
+        outputMsg += "【打劫@XXX】抢对方余额，若失败需赔付"
         yield event.plain_result(f"{outputMsg}")    
 
     @filter.command("刮刮乐余额")
@@ -392,4 +477,40 @@ class MyPlugin(Star):
         
         yield event.plain_result(f"{msg}")
 
-        # todu  好运卡   用户可以购买好运卡提升概率
+
+    @filter.command("打劫")
+    async def rob_command(self, event: AstrMessageEvent):
+        '''抢劫其他用户的余额'''
+        robber_id = event.get_sender_id()
+        robber_name = event.get_sender_name()
+        for comp in event.message_obj.message:
+            if isinstance(comp, At):
+                victim_id = comp.qq
+                break
+        # 解析被抢者ID（适配@消息）
+        
+        if not victim_id:
+            yield event.plain_result("请指定抢劫目标，例如：抢余额 @某人")
+            return
+            
+        # victim_id = victim_id[0]
+        victim_info = self.server._get_user(victim_id)
+        if not victim_info:
+            yield event.plain_result("受害者不存在")
+            return
+        
+        # 执行抢劫
+        result = self.server.rob_balance(robber_id, victim_id)
+        
+        # 构建响应消息
+        if result['success']:
+            msg = (
+                f"🏴‍☠️ {robber_name} 对 {victim_info['nickname']} 发动了抢劫！\n"
+                f"▸ {result['msg']}\n"
+                f"▸ 当前余额：{result['balance']}元\n"
+                f"⏳ 冷却时间：{result['cooldown']}秒"
+            )
+        else:
+            msg = f"❌ 抢劫失败：{result['msg']}"
+            
+        yield event.plain_result(msg)
