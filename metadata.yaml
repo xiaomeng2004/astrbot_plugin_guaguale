@@ -1,6 +1,6 @@
 name: 刮刮乐
 desc: 刮刮乐插件，快来试试运气吧。
 help: 输入 /刮刮乐帮助 查看关键词回复帮助
-version: v1.2.1
+version: v1.2.2
 author: waterfeet
 repo: https://github.com/waterfeet/astrbot_plugin_guaguale

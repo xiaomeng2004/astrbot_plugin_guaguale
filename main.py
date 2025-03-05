@@ -18,8 +18,8 @@ class ScratchServer:
         
         # 彩票配置
         self.prizes = [0, 5, 10, 20, 50, 100]       # 可能开出的价值
-        self.weights = [70, 15, 10, 3, 1.6, 0.4]    #相应概率 %
-        self.cost = 25                              #每张票价   每张刮七个  中奖期望在24.85 元  爽死狗群友
+        self.weights = [70, 15, 10, 3, 1.6, 0.4]    # 相应概率 %
+        self.cost = 25                              # 每张票价   每张刮七个  中奖期望在24.85 元  爽死狗群友
         self.max_daily_scratch = 10                 # 每日限制次数
 
          # 新增抢劫配置
@@ -27,7 +27,33 @@ class ScratchServer:
         self.rob_success_rate = 35      # 成功率%
         self.rob_base_amount = 30       # 基础抢劫金额
         self.rob_max_ratio = 0.2        # 最大可抢对方余额的20%
-        self.rob_penalty = 30           # 失败赔偿金额
+        self.rob_penalty = 50           # 失败赔偿金额
+
+        # 新增事件配置
+        self.event_chance = 15         # 触发概率15%
+
+        self.events = {
+            'jackpot': {
+                'name': '💎 天降横财', 
+                'prob': 2,
+                'effect': lambda uid,reward: random.randint(100, 200)  # 使用参数uid
+            },
+            # 'balance_swap': {
+            #     'name': '🔄 乾坤大挪移',
+            #     'prob': 2,
+            #     'effect': lambda uid,reward: self._swap_random_balance(uid)  # 传入当前用户ID
+            # },
+            'double_next': {
+                'name': '🔥 暴击时刻', 
+                'prob': 5,
+                'effect': lambda uid,reward: reward * 2  # 本次收益双倍
+            },
+            'ghost': {
+                'name': '👻 见鬼了！',
+                'prob': 3,
+                'effect': lambda uid,reward: -abs(reward)  # 反转收益
+            },
+        }
 
         self._init_db()
 
@@ -55,7 +81,18 @@ class ScratchServer:
             try:
                 conn.execute('ALTER TABLE users ADD COLUMN last_rob_time INTEGER;')
             except sqlite3.OperationalError:
-                pass    
+                pass  
+            # 新增事件状态字段
+            try:
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS event_states (
+                        user_id TEXT PRIMARY KEY,
+                        double_remain INTEGER DEFAULT 0,
+                        bonus_balance INTEGER DEFAULT 0
+                    )
+                ''')
+            except sqlite3.OperationalError:
+                pass  
 
 
 
@@ -160,9 +197,38 @@ class ScratchServer:
                 # 生成彩票结果
                 ticket = self.generate_ticket()
                 reward = sum(ticket)
+
+                # 在计算reward后添加事件处理
+                original_reward = reward
+                event_result = None
+                
+                # 事件处理（新增异常捕获）
+                event_result = None
+                try:
+                    if random.randint(1, 100) <= self.event_chance:
+                        event = self._select_random_event()
+                        effect_output = event['effect'](user_id, reward)  # 传入当前用户ID
+                        
+                        # 处理不同类型事件
+                        if event['name'] == '💎 天降横财':
+                            reward += effect_output
+                            event_result = event | {'detail': f"额外获得 {effect_output}元"}
+                        elif event['name'] == '🔥 暴击时刻':
+                            reward = effect_output
+                            event_result = event | {'detail': f"本次收益翻倍！获得 {effect_output}元"}
+                        # elif event['name'] == '🔄 乾坤大挪移':
+                        #     event_result = event | {'detail': effect_output}
+                        elif event['name'] == '👻 见鬼了！':
+                            reward = effect_output
+                            event_result = event | {'detail': "收益被鬼吃掉啦！"}
+                except Exception as e:
+                    logger.error(f"Event handling error: {e}")
+                    event_result = {'name': '⚡ 系统异常', 'detail': '事件处理失败'}            
+                    
+                # 更新最终收益（确保事件影响后的计算）
                 net_gain = reward - self.cost
                 new_balance = user_dict['balance'] + net_gain
-
+                
                 # 更新数据库
                 cur.execute('''UPDATE users SET
                             balance = ?,
@@ -176,14 +242,14 @@ class ScratchServer:
                     'success': True,
                     'balance': new_balance,
                     'ticket': ticket,
-                    'reward': reward,
                     'net_gain': net_gain,
+                    'event': event_result,
+                    'original_reward': original_reward,
+                    'final_reward': reward,
                     'msg': f"获得 {reward}元 {'(盈利)' if net_gain > 0 else '(亏损)'}"
                 }
-
-            except Exception as e:
-                conn.rollback()
-                return {'success': False, 'msg': '系统错误'}
+            except sqlite3.Error as e:
+                return {'success': False, 'msg': '数据库错误'}
     
     def rob_balance(self, robber_id: str, victim_id: str) -> dict:
         """
@@ -257,8 +323,10 @@ class ScratchServer:
                 else:
                     # 抢劫失败逻辑
                     penalty = min(robber[0], self.rob_penalty)
-                    cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?',
-                               (penalty, robber_id))
+                    cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', # 抢劫者扣钱
+                    (penalty, robber_id))
+                    cur.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', # 受害者加钱
+                    (penalty, victim_id))
                     steal_amount = -penalty
                     msg = f"抢劫失败，赔偿对方 {penalty}元！"
 
@@ -378,6 +446,44 @@ class ScratchServer:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def _select_random_event(self):
+        """加权随机选择事件"""
+        total = sum(e['prob'] for e in self.events.values())
+        r = random.uniform(0, total)
+        upto = 0
+        for event in self.events.values():
+            if upto + event['prob'] >= r:
+                return event
+            upto += event['prob']
+        return list(self.events.values())[0]
+
+    # def _swap_random_balance(self, user_id: str) -> str:
+    #     """随机交换余额"""
+    #     with sqlite3.connect(self.db_path) as conn:
+    #         # 找到随机目标
+    #         target = conn.execute(
+    #             'SELECT user_id, balance FROM users WHERE user_id != ? ORDER BY RANDOM() LIMIT 1',
+    #             (user_id,)
+    #         ).fetchone()
+    #         if not target:
+    #             return "交换失败，没有其他用户"
+            
+    #         # 交换余额
+    #         my_balance = conn.execute(
+    #             'SELECT balance FROM users WHERE user_id = ?',
+    #             (user_id,)
+    #         ).fetchone()[0]
+            
+    #         conn.execute(
+    #             'UPDATE users SET balance = ? WHERE user_id = ?',
+    #             (target[1], user_id)
+    #         )
+    #         conn.execute(
+    #             'UPDATE users SET balance = ? WHERE user_id = ?',
+    #             (my_balance, target[0])
+    #         )
+    #         return f"与 {target[0]} 交换了余额！"
+
 
 
 
@@ -390,7 +496,7 @@ class MyPlugin(Star):
 
     @filter.command("刮刮乐")
     async def guaguale_play(self, event: AstrMessageEvent):
-        '''这是一个 刮刮乐 指令 用于抽一次刮刮乐''' 
+        '''抽一次刮刮乐''' 
         user_name = event.get_sender_name()
         user_id = event.get_sender_id()
         # 自动注册用户
@@ -398,28 +504,41 @@ class MyPlugin(Star):
             self.server.register_user(user_id, user_name)
 
         result = self.server.play_game(user_id)
+        # if result['success']:
+        #     ticket_str = " ".join(f"{n}元" for n in result['ticket'])
+        #     outputMsg =  f'''中奖结果：{ticket_str}\n净收益：{result['net_gain']}元\n余额：{result['balance']}元'''
+        # else:
+        #     outputMsg = result['msg'] 
         if result['success']:
             ticket_str = " ".join(f"{n}元" for n in result['ticket'])
-            outputMsg =  f'''中奖结果：{ticket_str}\n净收益：{result['net_gain']}元\n余额：{result['balance']}元'''
+            outputMsg = f"刮奖结果：{ticket_str}\n"
+        
+            if result.get('event'):
+                gglevent = result['event']
+                outputMsg += f"✨ {gglevent['name']} ✨\n{gglevent['detail']}\n"
+                if gglevent['name'] == '👻 见鬼了！':
+                    outputMsg += f"原应获得：{result['original_reward']}元 → 实际获得：{result['final_reward']}元\n"
+            
+            outputMsg += f"净收益：{result['net_gain']}元\n余额：{result['balance']}元"
         else:
-            outputMsg = result['msg'] 
+            outputMsg = f"{result['msg']}"
         yield event.plain_result(f"{outputMsg}")
 
     @filter.command("刮刮乐帮助")
     async def guaguale_help(self, event: AstrMessageEvent):
-        '''这是一个 刮刮乐帮助 指令 用于查看刮刮乐指令''' 
+        '''查看刮刮乐指令''' 
 
         outputMsg = "刮刮乐游戏,快来试试运气吧：\n"
         outputMsg += "【刮刮乐】购买一张刮刮乐并刮开，计算得失\n"
         outputMsg += "【刮刮乐余额】查询当前余额\n"
         outputMsg += "【刮刮乐每日签到】获得100元\n"
-        outputMsg += "【刮刮乐排行榜】获取全局排行榜（暂不分群统计）"
-        outputMsg += "【打劫@XXX】抢对方余额，若失败需赔付"
+        outputMsg += "【刮刮乐排行榜】获取全局排行榜（暂不分群统计）\n"
+        outputMsg += "【打劫@XXX】抢对方余额, 若失败需赔付"
         yield event.plain_result(f"{outputMsg}")    
 
     @filter.command("刮刮乐余额")
     async def guaguale_balance(self, event: AstrMessageEvent):
-        '''这是一个 刮刮乐 余额 指令 用于查询余额''' 
+        '''查询个人余额''' 
         user_name = event.get_sender_name()
         user_id = event.get_sender_id()
         # 自动注册用户
@@ -434,7 +553,7 @@ class MyPlugin(Star):
 
     @filter.command("刮刮乐每日签到")
     async def guaguale_signin(self, event: AstrMessageEvent):
-        '''这是一个 刮刮乐 每日签到 指令 用于每日签到获取100元''' 
+        '''每日签到获取100元''' 
         user_name = event.get_sender_name()
         user_id = event.get_sender_id()
         # 自动注册用户
@@ -450,7 +569,7 @@ class MyPlugin(Star):
 
     @filter.command("刮刮乐排行榜")
     async def guaguale_ranking(self, event: AstrMessageEvent):
-
+        '''查看全局排名''' 
         user_name = event.get_sender_name()
         user_id = event.get_sender_id()
         # 未注册用户
