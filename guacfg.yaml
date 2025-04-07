@@ -5,7 +5,7 @@ lottery:
   max_daily_scratch: 10
   num: 7
   prizes:
-  - 10000
+  - 0
   - 5
   - 10
   - 20
