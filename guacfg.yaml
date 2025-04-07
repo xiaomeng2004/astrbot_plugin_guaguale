@@ -1,0 +1,28 @@
+# guacfg.yaml
+
+lottery:
+  cost: 25
+  max_daily_scratch: 10
+  num: 7
+  prizes:
+  - 10000
+  - 5
+  - 10
+  - 20
+  - 50
+  - 100
+  weights:
+  - 70
+  - 15
+  - 10
+  - 3
+  - 1.6
+  - 0.4
+robbery:
+  base_amount: 30
+  cooldown: 300
+  max_ratio: 0.2
+  penalty: 50
+  success_rate: 35
+events:
+  chance: 0.15
