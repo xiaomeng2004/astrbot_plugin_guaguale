@@ -10,7 +10,7 @@ from astrbot.api import logger
 class DatabaseManager:
     def __init__(self, db_path):
         self.db_path = db_path
-        self.boss_name = 'when'
+        self.boss_name = ''
         self.rob_success_rate = 35      # 成功率%
         self.rob_base_amount = 30       # 基础抢劫金额
         self.rob_max_ratio = 0.2        # 最大可抢对方余额的20%
