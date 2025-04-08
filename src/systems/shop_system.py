@@ -4,9 +4,9 @@ from ..database.manager import DatabaseManager
 
 class ShopSystem:
     DEFAULT_SHOP_ITEMS = [
-        (1, "改名卡", 50, "修改你的昵称", 999),
-        (2, "刮卡券", 300, "额外增加5次刮卡次数", 99),
-        (3, "护身符", 1000, "保护自己24小时内不被抢劫", 9999)
+        (1, "改名卡", 50, "修改你的昵称", 99),
+        (2, "刮卡券", 300, "额外增加5次刮卡次数", 2),
+        (3, "护身符", 1000, "保护自己24小时内不被抢劫", 99)
     ]
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager

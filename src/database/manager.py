@@ -10,7 +10,7 @@ from astrbot.api import logger
 class DatabaseManager:
     def __init__(self, db_path):
         self.db_path = db_path
-        self.boss_name = ''
+        self.boss_name = 'when'
         self.rob_success_rate = 35      # 成功率%
         self.rob_base_amount = 30       # 基础抢劫金额
         self.rob_max_ratio = 0.2        # 最大可抢对方余额的20%
@@ -589,22 +589,23 @@ class DatabaseManager:
                     (user_id,)
                 ).fetchone()[0]
                 
-                if user_balance < item[2]:
-                    return {'success': False, 'msg': '余额不足'}
+                if (user_balance < item[2] or item[4] == 0):
+                    return {'success': False, 'msg': '余额不足或商品数量不足'}
                 
-                # 更新库存和余额
-                cur.execute('UPDATE shop_items SET stock = stock - 1 WHERE item_id = ?', (item_id,))
-                cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (item[2], user_id))
-                cur.execute('''INSERT OR REPLACE INTO user_inventory 
-                             VALUES (?, ?, COALESCE((SELECT quantity FROM user_inventory 
-                             WHERE user_id = ? AND item_id = ?), 0) + 1)''',
-                             (user_id, item_id, user_id, item_id))
+                else:
+                     # 更新库存和余额
+                    cur.execute('UPDATE shop_items SET stock = stock - 1 WHERE item_id = ?', (item_id,))
+                    cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (item[2], user_id))
+                    cur.execute('''INSERT OR REPLACE INTO user_inventory 
+                                VALUES (?, ?, COALESCE((SELECT quantity FROM user_inventory 
+                                WHERE user_id = ? AND item_id = ?), 0) + 1)''',
+                                 (user_id, item_id, user_id, item_id))
                 
-                # 转账给老板
-                cur.execute('UPDATE users SET balance = balance + ? WHERE user_id = "boss"', (item[2],))
+                    # 转账给老板
+                    cur.execute('UPDATE users SET balance = balance + ? WHERE user_id = "boss"', (item[2],))
                 
-                conn.commit()
-                return {'success': True, 'item_name': item[1], 'balance': user_balance - item[2]}
+                    conn.commit()
+                    return {'success': True, 'item_name': item[1], 'balance': user_balance - item[2]}
                 
             except Exception as e:
                 conn.rollback()

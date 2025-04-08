@@ -175,16 +175,16 @@ class MyPlugin(Star):
         if not self.is_admin(user_id):
             event.set_result(MessageEventResult().message("❌ 只有管理员才能使用此指令").use_t2i(False))
             return
-        self.server._update_balance("boss", 10000)
+        self.server.db_manager.update_balance("boss", 10000)
         boss_balance = self.server.get_balance("boss")['balance']
         yield event.plain_result(f"老板资金已补充！当前老板账户余额：{boss_balance}元")    
 
     @filter.command("老板状态")
     async def boss_status(self, event: AstrMessageEvent):
         '''查看系统老板的当前状态'''
-        boss_info = self.server.get_balance("boss")
-        if boss_info['success']:
-            yield event.plain_result(f"💰 系统老板{self.server.bossname}当前资金：{boss_info['balance']}元")
+        boss_info = self.server.get_user_info("boss")
+        if boss_info['nickname']:
+            yield event.plain_result(f"{boss_info['nickname']}当前资金：{boss_info['balance']}元")
         else:
             yield event.plain_result("系统老板暂时不在线")
 
