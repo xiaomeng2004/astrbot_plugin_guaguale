@@ -2,7 +2,7 @@
 
 lottery:
   cost: 25
-  max_daily_scratch: 10
+  max_daily_scratch: 30
   num: 7
   prizes:
   - 0
@@ -11,13 +11,15 @@ lottery:
   - 20
   - 50
   - 100
+  - 1000
   weights:
   - 70
   - 15
   - 10
   - 3
   - 1.6
-  - 0.4
+  - 0.3
+  - 0.1
 robbery:
   base_amount: 30
   cooldown: 300
@@ -25,4 +27,4 @@ robbery:
   penalty: 50
   success_rate: 35
 events:
-  chance: 0.15
+  chance: 0.5
