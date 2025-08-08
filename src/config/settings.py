@@ -24,8 +24,17 @@ class ConfigManager:
                 
             # 参数映射到类属性
             
-            self.prizes = config['lottery']['prizes'] # 刮刮乐价值
-            self.weights = config['lottery']['weights'] # 对应权重
+            # 确保数值类型正确
+            try:
+                self.prizes = [int(x) for x in config['lottery']['prizes']] # 刮刮乐价值
+            except (ValueError, TypeError, KeyError):
+                self.prizes = [0, 5, 10, 20, 50, 100]
+                
+            try:
+                self.weights = [float(x) for x in config['lottery']['weights']] # 对应权重
+            except (ValueError, TypeError, KeyError):
+                self.weights = [70, 15, 10, 3, 1.6, 0.4]
+                
             self.cost = config['lottery']['cost'] # 一张刮刮乐价格
             self.max_daily_scratch = config['lottery']['max_daily_scratch'] #每天刮奖次数，<=0无限次
             self.num = config['lottery']['num'] #一张刮刮乐有几次机会

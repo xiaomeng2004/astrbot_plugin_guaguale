@@ -124,12 +124,24 @@ class ScratchServer:
         self.db_manager.update_scratch_count(user_id, new_count, today.isoformat())
 
         ticket_str = " ".join(f"{n}{self.cfg_mgr.currency_unit}" for n in ticket)
-        outputMsg = f"刮奖结果：{ticket_str}\n"
+        
+        # 统计刮奖结果，按金额分组显示
+        from collections import Counter
+        ticket_counts = Counter(ticket)
+        ticket_display = []
+        for amount in sorted(ticket_counts.keys(), reverse=True):
+            count = ticket_counts[amount]
+            ticket_display.append(f"{amount}{self.cfg_mgr.currency_unit}×{count}")
+        
+        ticket_str = "  ".join(ticket_display)
+        outputMsg = f"刮奖结果：\n{ticket_str}\n"
         
         if event_result:
             outputMsg += f"✨ {event_result['name']} ✨\n{event_result['detail']}\n"
 
-        outputMsg += f"净收益：{net_gain}{self.cfg_mgr.currency_unit}\n余额：{new_balance}{self.cfg_mgr.currency_unit}"
+        # 显示详细的净收益计算
+        total_win = sum(ticket)
+        outputMsg += f"净收益：{total_win}{self.cfg_mgr.currency_unit}-{self.cfg_mgr.cost}{self.cfg_mgr.currency_unit}={net_gain}{self.cfg_mgr.currency_unit}\n余额：{new_balance}{self.cfg_mgr.currency_unit}"
         return outputMsg
 
     def update_nickname(self, *args, **kwargs): 

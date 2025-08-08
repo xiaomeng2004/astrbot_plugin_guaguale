@@ -13,7 +13,7 @@ from .src.scratch_server import ScratchServer
 from .src.systems import robbery_system
 
 
-@register("guaguale", "WaterFeet", "刮刮乐插件，试试运气如何", "1.0.0", "https://github.com/waterfeet/astrbot_plugin_guaguale")
+@register("guaguale", "WaterFeet/悦悦", "刮刮乐插件，试试运气如何", "2.0.2", "https://github.com/xiaomeng2004/astrbot_plugin_guaguale")
 class MyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -23,8 +23,24 @@ class MyPlugin(Star):
         self.lottery_cost: int = config.get("lottery_cost", 25)
         self.max_daily_scratch: int = config.get("max_daily_scratch", 10)
         self.scratch_num: int = config.get("scratch_num", 7)
-        self.lottery_prizes: list = config.get("lottery_prizes", [0, 5, 10, 20, 50, 100])
-        self.lottery_weights: list = config.get("lottery_weights", [70, 15, 10, 3, 1.6, 0.4])
+        
+        # 确保奖品和权重列表的类型正确
+        prizes_raw = config.get("lottery_prizes", [0, 5, 10, 20, 50, 100])
+        weights_raw = config.get("lottery_weights", [70, 15, 10, 3, 1.6, 0.4])
+        
+        # 类型转换确保数值正确
+        try:
+            self.lottery_prizes: list = [int(x) for x in prizes_raw]
+        except (ValueError, TypeError):
+            logger.warning("奖品列表类型转换失败，使用默认值")
+            self.lottery_prizes: list = [0, 5, 10, 20, 50, 100]
+            
+        try:
+            self.lottery_weights: list = [float(x) for x in weights_raw]
+        except (ValueError, TypeError):
+            logger.warning("权重列表类型转换失败，使用默认值")
+            self.lottery_weights: list = [70, 15, 10, 3, 1.6, 0.4]
+        
         self.rob_cooldown: int = config.get("rob_cooldown", 300)
         self.rob_success_rate: int = config.get("rob_success_rate", 35)
         self.rob_base_amount: int = config.get("rob_base_amount", 30)
@@ -100,9 +116,7 @@ class MyPlugin(Star):
         7. 【购买】- 如：购买 2
         8. 【使用道具】- 如：使用道具 2
         9. 【改名】- 如：改名 哪吒
-        10.【老板状态】- 查看可恶的老板有多少钱
-        11.【老板补款】- [admin]老板太穷了，给老板补一万
-        12.【我的仓库】- 显示自己的道具列表
+        10.【我的仓库】- 显示自己的道具列表
         """
         yield event.plain_result(help_msg.strip()) 
 
@@ -209,15 +223,53 @@ class MyPlugin(Star):
         yield event.plain_result(msg)
 
     @filter.command("老板补款")
-    async def boss_topup(self, event: AstrMessageEvent):
-        '''为老板账户补充资金'''
+    async def boss_topup(self, event: AstrMessageEvent, amount: str = "100"):
+        '''为老板账户或指定用户补充资金'''
         user_id = event.get_sender_id()
         if not self.is_admin(user_id):
             event.set_result(MessageEventResult().message("❌ 只有管理员才能使用此指令").use_t2i(False))
             return
-        self.server.db_manager.update_balance("boss", 10000)
-        boss_balance = self.server.get_balance("boss")['balance']
-        yield event.plain_result(f"老板资金已补充！当前老板账户余额：{boss_balance}{self.currency_unit}")    
+        
+        # 解析金额
+        try:
+            amount_value = int(amount)
+        except ValueError:
+            yield event.plain_result("❌ 金额必须是数字")
+            return
+        
+        # 检查是否@了用户
+        target_user_id = None
+        target_user_name = None
+        for comp in event.message_obj.message:
+            if isinstance(comp, At):
+                target_user_id = f"{comp.qq}"
+                break
+        
+        if target_user_id:
+            # 向指定用户打钱
+            if not self.server.isUseridExist(target_user_id)['success']:
+                yield event.plain_result("❌ 目标用户不存在")
+                return
+            
+            target_user_info = self.server.get_user_info(target_user_id)
+            target_user_name = target_user_info['nickname']
+            
+            self.server.db_manager.update_balance(target_user_id, amount_value)
+            new_balance = self.server.get_balance(target_user_id)['balance']
+            
+            if amount_value > 0:
+                yield event.plain_result(f"✅ 已向 {target_user_name} 转账 {amount_value}{self.currency_unit}！\n当前余额：{new_balance}{self.currency_unit}")
+            else:
+                yield event.plain_result(f"✅ 已从 {target_user_name} 扣除 {abs(amount_value)}{self.currency_unit}！\n当前余额：{new_balance}{self.currency_unit}")
+        else:
+            # 向老板账户打钱
+            self.server.db_manager.update_balance("boss", amount_value)
+            boss_balance = self.server.get_balance("boss")['balance']
+            
+            if amount_value > 0:
+                yield event.plain_result(f"✅ 老板资金已补充 {amount_value}{self.currency_unit}！\n当前老板账户余额：{boss_balance}{self.currency_unit}")
+            else:
+                yield event.plain_result(f"✅ 老板资金已扣除 {abs(amount_value)}{self.currency_unit}！\n当前老板账户余额：{boss_balance}{self.currency_unit}")    
 
     @filter.command("老板状态")
     async def boss_status(self, event: AstrMessageEvent):

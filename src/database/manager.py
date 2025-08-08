@@ -69,7 +69,7 @@ class DatabaseManager:
                 INSERT OR IGNORE INTO users 
                 (user_id, nickname, balance) 
                 VALUES (?, ?, ?)
-            ''', (boss_id, "💰 系统老板"+ self.boss_name, 10000))
+            ''', (boss_id, "💰 系统老板"+ self.boss_name, 1000))
             conn.commit()
 
     def isUseridExist(self, user_id: str):
