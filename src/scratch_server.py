@@ -91,7 +91,7 @@ class ScratchServer:
         
         if last_date == today:
             if result_info['daily_scratch_count'] >= self.cfg_mgr.max_daily_scratch and self.cfg_mgr.max_daily_scratch > 0:
-                return {'success': False, 'msg': '今日次数已用完'}
+                return f"今日次数已用完({result_info['daily_scratch_count']}/{self.cfg_mgr.max_daily_scratch})"
             new_count = result_info['daily_scratch_count'] + 1
         else:
             new_count = 1
@@ -134,14 +134,15 @@ class ScratchServer:
             ticket_display.append(f"{amount}{self.cfg_mgr.currency_unit}×{count}")
         
         ticket_str = "  ".join(ticket_display)
-        outputMsg = f"刮奖结果：\n{ticket_str}\n"
+        outputMsg = f"#刮奖结果：\n{ticket_str}\n"
         
         if event_result:
             outputMsg += f"✨ {event_result['name']} ✨\n{event_result['detail']}\n"
 
         # 显示详细的净收益计算
         total_win = sum(ticket)
-        outputMsg += f"净收益：{total_win}{self.cfg_mgr.currency_unit}-{self.cfg_mgr.cost}{self.cfg_mgr.currency_unit}={net_gain}{self.cfg_mgr.currency_unit}\n余额：{new_balance}{self.cfg_mgr.currency_unit}"
+        outputMsg += f"· 净收益：{total_win}-{self.cfg_mgr.cost}={net_gain}{self.cfg_mgr.currency_unit}\n余额：{new_balance}{self.cfg_mgr.currency_unit}"
+        outputMsg += f"\n· 今日次数：{new_count}/{self.cfg_mgr.max_daily_scratch}"
         return outputMsg
 
     def update_nickname(self, *args, **kwargs): 
