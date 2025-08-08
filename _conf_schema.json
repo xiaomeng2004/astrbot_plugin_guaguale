@@ -1,0 +1,74 @@
+{
+    "lottery_cost": {
+        "description": "刮刮乐单张价格",
+        "type": "int",
+        "hint": "每张刮刮乐的花费金额",
+        "default": 25
+    },
+    "max_daily_scratch": {
+        "description": "每日刮奖次数限制",
+        "type": "int",
+        "hint": "每个用户每天最多可以刮几次，设置为0表示无限制",
+        "default": 10
+    },
+    "scratch_num": {
+        "description": "每张刮刮乐的刮奖机会数",
+        "type": "int",
+        "hint": "一张刮刮乐可以刮几个数字",
+        "default": 5
+    },
+    "lottery_prizes": {
+        "description": "奖品数值列表",
+        "type": "list",
+        "hint": "刮刮乐可能中的奖金数值，必须与权重列表数量对应",
+        "default": [0, 5, 10, 20, 50, 100]
+    },
+    "lottery_weights": {
+        "description": "奖品权重列表",
+        "type": "list",
+        "hint": "对应奖品的中奖权重，数值越大越容易中奖，必须与奖品数值数量对应",
+        "default": [70, 15, 10, 3, 1.6, 0.4]
+    },
+    "rob_cooldown": {
+        "description": "抢劫冷却时间(秒)",
+        "type": "int",
+        "hint": "用户进行抢劫操作后需要等待的时间",
+        "default": 300
+    },
+    "rob_success_rate": {
+        "description": "抢劫成功率(%)",
+        "type": "int",
+        "hint": "抢劫成功的概率百分比",
+        "default": 35
+    },
+    "rob_base_amount": {
+        "description": "抢劫基础金额",
+        "type": "int",
+        "hint": "抢劫时的基础金额",
+        "default": 30
+    },
+    "rob_max_ratio": {
+        "description": "抢劫最大比例",
+        "type": "float",
+        "hint": "抢劫时最多能抢到对方余额的比例(0-1)",
+        "default": 0.2
+    },
+    "rob_penalty": {
+        "description": "抢劫失败惩罚",
+        "type": "int",
+        "hint": "抢劫失败时需要扣除的金额",
+        "default": 50
+    },
+    "event_chance": {
+        "description": "特殊事件触发概率",
+        "type": "float",
+        "hint": "刮奖时触发特殊事件的概率(0-1)",
+        "default": 0.15
+    },
+    "currency_unit": {
+        "description": "货币单位",
+        "type": "string",
+        "hint": "游戏中显示的货币单位名称",
+        "default": "元"
+    }
+}

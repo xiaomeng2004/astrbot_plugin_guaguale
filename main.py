@@ -3,6 +3,7 @@ from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 from astrbot.api.all import *
+from astrbot.core import AstrBotConfig
 
 from datetime import datetime, timezone
 import json
@@ -14,9 +15,49 @@ from .src.systems import robbery_system
 
 @register("guaguale", "WaterFeet", "刮刮乐插件，试试运气如何", "1.0.0", "https://github.com/waterfeet/astrbot_plugin_guaguale")
 class MyPlugin(Star):
-    server = ScratchServer()
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.config = config
+        
+        # 初始化配置参数
+        self.lottery_cost: int = config.get("lottery_cost", 25)
+        self.max_daily_scratch: int = config.get("max_daily_scratch", 10)
+        self.scratch_num: int = config.get("scratch_num", 7)
+        self.lottery_prizes: list = config.get("lottery_prizes", [0, 5, 10, 20, 50, 100])
+        self.lottery_weights: list = config.get("lottery_weights", [70, 15, 10, 3, 1.6, 0.4])
+        self.rob_cooldown: int = config.get("rob_cooldown", 300)
+        self.rob_success_rate: int = config.get("rob_success_rate", 35)
+        self.rob_base_amount: int = config.get("rob_base_amount", 30)
+        self.rob_max_ratio: float = config.get("rob_max_ratio", 0.2)
+        self.rob_penalty: int = config.get("rob_penalty", 50)
+        self.event_chance: float = config.get("event_chance", 0.15)
+        self.currency_unit: str = config.get("currency_unit", "元")
+        
+        # 创建配置字典传递给server
+        scratch_config = {
+            'lottery': {
+                'cost': self.lottery_cost,
+                'max_daily_scratch': self.max_daily_scratch,
+                'num': self.scratch_num,
+                'prizes': self.lottery_prizes,
+                'weights': self.lottery_weights
+            },
+            'robbery': {
+                'cooldown': self.rob_cooldown,
+                'success_rate': self.rob_success_rate,
+                'base_amount': self.rob_base_amount,
+                'max_ratio': self.rob_max_ratio,
+                'penalty': self.rob_penalty
+            },
+            'events': {
+                'chance': self.event_chance
+            },
+            'currency': {
+                'unit': self.currency_unit
+            }
+        }
+        
+        self.server = ScratchServer(config=scratch_config)
         self.admins = self._load_admins()  # 加载管理员列表
     def _load_admins(self):
         """加载管理员列表"""
@@ -48,10 +89,10 @@ class MyPlugin(Star):
     async def guaguale_help(self, event: AstrMessageEvent):
         '''查看刮刮乐指令''' 
 
-        help_msg = """
+        help_msg = f"""
         🎮 刮刮乐游戏系统 🎮
-        1. 【刮刮乐】- 消耗25元刮奖（每日限10次）
-        2. 【刮刮乐每日签到】- 每日领取100元
+        1. 【刮刮乐】- 消耗{self.lottery_cost}{self.currency_unit}刮奖（每日限{self.max_daily_scratch}次）
+        2. 【刮刮乐每日签到】- 每日领取100{self.currency_unit}
         3. 【刮刮乐余额】- 查询当前余额
         4. 【打劫@某人】- 尝试抢劫对方余额
         5. 【刮刮乐排行榜】- 查看财富排行榜
@@ -77,13 +118,13 @@ class MyPlugin(Star):
         reset = self.server.get_balance(user_id)
         user_name2 = self.server.get_user_info(user_id)
         if reset["success"]:
-            yield event.plain_result(f"用户：{user_name2['nickname']} 刮刮乐余额{reset['balance']}")
+            yield event.plain_result(f"用户：{user_name2['nickname']} 余额{reset['balance']}{self.currency_unit}")
         else:
             yield event.plain_result(f"{reset['msg']}")
 
     @filter.command("刮刮乐每日签到") #  👌
     async def guaguale_signin(self, event: AstrMessageEvent):
-        '''每日签到获取100元''' 
+        '''每日签到获取100''' 
         user_name = event.get_sender_name()
         user_id = event.get_sender_id()
         # 自动注册用户
@@ -116,12 +157,11 @@ class MyPlugin(Star):
         # 构建响应消息
         msg = "🏆 土豪排行榜 🏆\n"
         for item in global_rank['rankings']:
-            # msg += (f"第{item['rank']}名：{item['nickname']} \n 余额：{item['balance']}元\n")
-            msg += (f"第{item['rank']}名：{item['nickname']} \n 余额：{item['balance']}元\n")
+            msg += (f"第{item['rank']}名：{item['nickname']} \n 余额：{item['balance']}{self.currency_unit}\n")
         
         if my_rank['success']:
             msg += (f"\n👤 您的排名: {my_rank['user_rank']}/{my_rank['total_users']}")
-            msg+=(f"\n💰 当前余额: {my_rank['user_info']['balance']}元")
+            msg+=(f"\n💰 当前余额: {my_rank['user_info']['balance']}{self.currency_unit}")
         
         yield event.plain_result(f"{msg}")
 
@@ -160,7 +200,7 @@ class MyPlugin(Star):
             msg = (
                 f"🏴‍☠️ {robber_info['nickname']} 对 {victim_info['nickname']} 发动了抢劫！\n"
                 f"▸ {result['msg']}\n"
-                f"▸ {robber_info['nickname']}当前余额：{result['balance']}元\n"
+                f"▸ {robber_info['nickname']}当前余额：{result['balance']}{self.currency_unit}\n"
                 f"⏳ 冷却时间：{result['cooldown']}秒"
             )
         else:
@@ -177,14 +217,14 @@ class MyPlugin(Star):
             return
         self.server.db_manager.update_balance("boss", 10000)
         boss_balance = self.server.get_balance("boss")['balance']
-        yield event.plain_result(f"老板资金已补充！当前老板账户余额：{boss_balance}元")    
+        yield event.plain_result(f"老板资金已补充！当前老板账户余额：{boss_balance}{self.currency_unit}")    
 
     @filter.command("老板状态")
     async def boss_status(self, event: AstrMessageEvent):
         '''查看系统老板的当前状态'''
         boss_info = self.server.get_user_info("boss")
         if boss_info['nickname']:
-            yield event.plain_result(f"{boss_info['nickname']}当前资金：{boss_info['balance']}元")
+            yield event.plain_result(f"{boss_info['nickname']}当前资金：{boss_info['balance']}{self.currency_unit}")
         else:
             yield event.plain_result("系统老板暂时不在线")
 
@@ -206,7 +246,7 @@ class MyPlugin(Star):
         for item in items:
             msg += (
                 f"【{item['item_id']}】{item['item_name']}\n"
-                f"💰 价格：{item['price']}元 | 📦 库存：{item['stock']}\n"
+                f"💰 价格：{item['price']}{self.currency_unit} | 📦 库存：{item['stock']}\n"
                 f"📝 说明：{item['description']}\n\n"
             )
         yield event.plain_result(msg.strip())
@@ -221,7 +261,7 @@ class MyPlugin(Star):
         if result['success']:
             msg = (
                 f"🎁 成功购买 {result['item_name']}！\n"
-                f"💰 当前余额：{result['balance']}元"
+                f"💰 当前余额：{result['balance']}{self.currency_unit}"
             )
         else:
             msg = f"❌ {result['msg']}"

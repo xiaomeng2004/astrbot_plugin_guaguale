@@ -3,7 +3,8 @@ import random
 from typing import Callable, Dict
 
 class EventSystem:
-    def __init__(self):
+    def __init__(self, currency_unit: str = "元"):
+        self.currency_unit = currency_unit
         self.events = self._load_default_events()
 
     def _load_default_events(self) -> Dict:
@@ -43,7 +44,7 @@ class EventSystem:
                 return event['handler'](base_reward)
         return {
             'type': '事件获取错误',
-            'message': f"额外获得 {0}元",
+            'message': f"额外获得 {0}{self.currency_unit}",
             'delta': 0    
         }
     
@@ -51,7 +52,7 @@ class EventSystem:
         bonus = random.randint(100, 200)
         return {
             'type': 'jackpot',
-            'message': f"💎 天降横财，额外获得 {bonus}元",
+            'message': f"💎 天降横财，额外获得 {bonus}{self.currency_unit}",
             'delta': bonus
         }
     

@@ -3,19 +3,24 @@ import yaml
 import os
 
 class ConfigManager:
-    def __init__(self):
+    def __init__(self, external_config=None):
         self.config_path = "./data/plugins/astrbot_plugin_guaguale/guacfg.yaml"
+        self.external_config = external_config
         # self.initConfig()  # 初始化时自动加载配置 -> 由外部调用
         
     def initConfig(self):
-        """ 读取并解析YAML配置文件 """
+        """ 读取并解析YAML配置文件或使用外部配置 """
         try:
-            # 检查配置文件是否存在
-            if not os.path.exists(self.config_path):
-                self._create_default_config()  # 创建默认配置
-                
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f) 
+            if self.external_config:
+                # 使用外部传入的配置
+                config = self.external_config
+            else:
+                # 检查配置文件是否存在
+                if not os.path.exists(self.config_path):
+                    self._create_default_config()  # 创建默认配置
+                    
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) 
                 
             # 参数映射到类属性
             
@@ -33,6 +38,8 @@ class ConfigManager:
 
             self.event_chance = config['events']['chance']
 
+            # 添加货币单位配置
+            self.currency_unit = config.get('currency', {}).get('unit', '元')
             
         except (FileNotFoundError, yaml.YAMLError) as e:
             print(f"配置加载失败: {str(e)}")

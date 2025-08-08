@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 from astrbot.api import logger
 
 class DatabaseManager:
-    def __init__(self, db_path):
+    def __init__(self, db_path, currency_unit: str = "元"):
         self.db_path = db_path
+        self.currency_unit = currency_unit
         self.boss_name = ''
         self.rob_success_rate = 35      # 成功率%
         self.rob_base_amount = 30       # 基础抢劫金额
@@ -300,22 +301,6 @@ class DatabaseManager:
                         WHERE user_id = ?''',
                         ( last_scratch_date, daily_scratch_count, user_id))
             conn.commit()
-            # 更新老板余额（反向操作）
-        #     cur.execute('UPDATE users SET balance = balance - ? WHERE user_id = "boss"',
-        #         (net_gain,))
-        #     conn.commit()
-        #     return {
-        #         'success': True,
-        #         'balance': new_balance,
-        #         'ticket': ticket,
-        #         'net_gain': net_gain,
-        #         'event': event_result,
-        #         'original_reward': original_reward,
-        #         'final_reward': reward,
-        #         'msg': f"获得 {reward}元 {'(盈利)' if net_gain > 0 else '(亏损)'}"
-        #     }
-        # except sqlite3.Error as e:
-        #     return {'success': False, 'msg': '数据库错误'}    
             
     def rob_balance(self, robber_id: str, victim_id: str) -> dict:
         """
@@ -371,7 +356,7 @@ class DatabaseManager:
                                (steal_amount, victim_id))
                     cur.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?',
                                (steal_amount, robber_id))
-                    msg = f"成功抢劫了 {steal_amount}元！"
+                    msg = f"成功抢劫了 {steal_amount}{self.currency_unit}！"
                 else:
                     # 抢劫失败逻辑
                     penalty = min(robber[0], self.rob_penalty)
@@ -380,7 +365,7 @@ class DatabaseManager:
                     cur.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', # 受害者加钱
                     (penalty, victim_id))
                     steal_amount = -penalty
-                    msg = f"抢劫失败，赔偿对方 {penalty}元！"
+                    msg = f"抢劫失败，赔偿对方 {penalty}{self.currency_unit}！"
 
                 # 更新抢劫时间
                 cur.execute('UPDATE users SET last_rob_time = ? WHERE user_id = ?',
